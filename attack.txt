@@ -1,0 +1,162 @@
+CBC Padding Oracle Attack
+=========================
+
+XOR
+---
+0 ^ 0 = 0
+0 ^ 1 = 1
+1 ^ 0 = 1
+1 ^ 1 = 0
+
+bitwise xor
+-----------
+  0011 ^
+  0110
+= 0101
+
+Rules
+-----
+A ^ A = 0
+
+C = A ^ B
+
+A ^ C = ?
+      = A ^ (A ^ B)
+      = (A ^ A) ^ B
+      = 0 ^ B
+      = B
+
+B ^ C = ?
+      = B ^ (A ^ B)
+      = A ^ (B ^ B)
+      = A ^ 0
+      = A
+
+E.g. swap vars A and B:
+-----------------------
+A = A ^ B
+B = A ^ B
+A = A ^ B
+
+* A = 1110
+* B = 0110
+
+A = 1110 ^ 
+    0110
+  = 1000
+B = (1110 ^ 0110) ^ 0110
+  = 1110
+A = 1000 ^ 1110
+  = 0110
+
+CBC Decryption
+--------------
+
+  C1/IV                C2
+[XXXXXXXX]         [XXXXXXXX]
+    |                  |
+    |     key-->( block cipher )
+    |           (  decryption  )
+    |                  |
+    |         [intermediate state I2]
+    |                  |
+    ---------------->(XOR)
+                       |
+                       P2
+                   [XXXXXXXX]
+
+P2 = I2 ^ C1
+
+Bitwise XOR:
+P2[15] = I2[15] ^ C1[15]
+
+* note 0-based indices so P2[15] is the last (16th)
+* byte of P2.
+
+We can manipulate C1
+--------------------
+P2' = I2 ^ C1' * note that I2 is unchanged
+
+Bitwise XOR:
+P2'[15] = I2[15] ^ C1'[15]
+
+Therefore:
+I2[15] = P2'[15] ^ C1'[15]
+
+If we can find C1'[15] and P2'[15], then we'll know I2[15].
+We control the value of C1'. How can we know P2'[15]?
+Answer: PKCS#7 padding.
+
+PKCS#7 padding
+--------------
+Valid P2':
+aabbccddeeffgghhaabbccddeeffgg01
+aabbccddeeffgghhaabbccddeeff0202
+aabbccddeeffgghhaabbccddee030303
+...
+10101010101010101010101010101010
+
+* If the plaintext is a multiple of block side, then PCKS#7
+* requires that an additional block of all 0x10 (16) is appended.
+
+Attack
+------
+
+** Round 1
+
+1. Set C1' to random bytes
+2. Set C1'[15]=0x00
+3. Ask oracle to decrypt until padding is correct. Incrementing
+   C1'[15] each time, i.e. 0x00, 0x01, 0x02, ..., 0x10
+4. When padding is correct, then it's highly probable that we've
+   found the right C1'[15] s.t. P2'[15]=0x01, but double check by
+   flipping all the preceding bytes and asking the oracle again to
+   ensure we haven't produced a valid plaintext with a different
+   padding, e.g. P2'=<13 bytes>030303.
+
+Now that we have C1'[15] we can calculate I2[15].
+
+I2[15] = 0x01 ^ C1'[15] * let's say C1'[15] = 0xf0
+I2[15] = 0xf1
+
+Now that we have I[15] we can calculate P2[15] (the original plaintext)
+with C1[15] (the original ciphertext).
+
+P2[15] = I2[15] ^ C1[15] * let's say C1[15] = 0xf2
+P2[15] = 0xf1 ^ 0xf2
+P2[15] = 0x03
+
+** Round 2
+
+Now do the same for C1'[14], C1'[13], ..., C1'[0]. E.g. for C1'[14].
+
+1. Set C1' to random bytes
+2. Set P2'[15] = 0x02 so padding is only correct if P2'[14] = 0x02.
+
+How do we do this? We discovered I2[15] at the end of round 1.
+
+P2'[15] = I2[15] ^ C1'[15]
+C1'[15] = P2'[15] ^ I2[15]
+C1'[15] = 0x01 ^ 0xf1
+C1'[15] = 0xf0
+
+Set C1'[15] = 0xf0 and C1'[14] = 0x00
+
+3. Ask oracle to decrypt until padding is correct. Incrementing
+   C1'[14] each time, i.e. 0x00, 0x01, 0x02, ..., 0x10
+4. When padding is correct, then it's highly probable that we've
+   found the right C1'[14] s.t. P2'[14]=0x02, but double check by
+   flipping all the preceding bytes oracle again.
+
+Now that we have C1'[14] we can calculate I2[14].
+
+I2[14] = 0x02 ^ C1'[14] * let's say C1'[15] = 0x04
+I2[14] = 0x02 ^ 0x04
+I2[14] = 0x06
+
+Now that we have I[14] we can calculate P2[14] (the original plaintext)
+with C1[14] (the original ciphertext).
+
+P2[14] = I2[14] ^ C1[14] * let's say C1[14] = 0x22
+P2[14] = 0x06 ^ 0x22
+P2[14] = 0x24
